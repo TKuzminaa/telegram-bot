@@ -1,11 +1,9 @@
 import asyncio
 import os
 import aiohttp
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -13,21 +11,16 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 
-class WeatherState(StatesGroup):
-    city = State()
-
-
 @dp.message(CommandStart())
-async def start_handler(message: Message, state: FSMContext):
-    await state.set_state(WeatherState.city)
+async def start_handler(message: Message):
     await message.answer(
         "Привет! Я бот погоды 🌤️\n\n"
         "Напиши название города (например: Москва, Санкт-Петербург, Казань):"
     )
 
 
-@dp.message(WeatherState.city)
-async def get_weather(message: Message, state: FSMContext):
+@dp.message()
+async def get_weather(message: Message):
     city = message.text.strip()
     
     async with aiohttp.ClientSession() as session:
@@ -36,7 +29,7 @@ async def get_weather(message: Message, state: FSMContext):
             geo_data = await resp.json()
         
         if not geo_data:
-            await message.answer("❌ Город не найден. Попробуй ещё раз:")
+            await message.answer("❌ Город не найден. Попробуй ещё раз (например: Москва):")
             return
         
         lat = geo_data[0]["lat"]
@@ -59,11 +52,12 @@ async def get_weather(message: Message, state: FSMContext):
     
     if 'rain' in weather_data:
         text += f"🌧️ Осадки: {weather_data['rain'].get('1h', 0)} мм\n"
+    elif 'snow' in weather_data:
+        text += f"❄️ Снег: {weather_data['snow'].get('1h', 0)} мм\n"
     else:
         text += f"🌈 Осадков нет\n"
     
     await message.answer(text, parse_mode="Markdown")
-    await state.clear()
 
 
 async def main():
