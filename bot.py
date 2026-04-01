@@ -5,7 +5,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-TOKEN = "8609738022:AAHMsb8ssonZ1kW98vU-tYLRfAqGDq-h5b0"
+TOKEN = os.getenv("BOT_TOKEN")
+
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN не найден!")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -19,7 +22,7 @@ async def start_handler(message: Message):
     )
 
 
-@dp.message()
+@dp.message(F.text)
 async def get_weather(message: Message):
     city = message.text.strip()
     
