@@ -5,14 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-# Пробуем разные варианты имени переменной
-TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-
-print(f"Environment variables: {list(os.environ.keys())}")
-print(f"TOKEN value: {'***' + TOKEN[-10:] if TOKEN else 'None'}")
-
-if not TOKEN:
-    raise RuntimeError("BOT_TOKEN не найден! Доступные переменные: " + str(list(os.environ.keys())))
+TOKEN = "8609738022:AAHMsb8ssonZ1kW98vU-tYLRfAqGDq-h5b0"
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -20,7 +13,6 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    print(f"Start command from {message.from_user.id}")
     await message.answer(
         "Привет! Я бот погоды 🌤️\n\n"
         "Напиши название города (например: Москва):"
@@ -29,14 +21,12 @@ async def start_handler(message: Message):
 
 @dp.message()
 async def get_weather(message: Message):
-    print(f"Got message: {message.text} from {message.from_user.id}")
     city = message.text.strip()
     
     async with aiohttp.ClientSession() as session:
         url_geo = f"http://api.openweathermap.org/geo/1.0?q={city},RU&limit=1&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru"
         async with session.get(url_geo) as resp:
             geo_data = await resp.json()
-            print(f"Geo response: {geo_data}")
         
         if not geo_data:
             await message.answer("❌ Город не найден. Попробуй ещё раз:")
@@ -49,7 +39,6 @@ async def get_weather(message: Message):
         url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru&units=metric"
         async with session.get(url_weather) as resp:
             weather_data = await resp.json()
-            print(f"Weather response: {weather_data}")
     
     main = weather_data["main"]
     weather = weather_data["weather"][0]
@@ -72,7 +61,6 @@ async def get_weather(message: Message):
 
 
 async def main():
-    print("Bot starting...")
     await dp.start_polling(bot)
 
 
