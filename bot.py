@@ -5,10 +5,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-TOKEN = os.getenv("BOT_TOKEN")
+# Пробуем разные варианты имени переменной
+TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
+
+print(f"Environment variables: {list(os.environ.keys())}")
+print(f"TOKEN value: {'***' + TOKEN[-10:] if TOKEN else 'None'}")
 
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN не найден!")
+    raise RuntimeError("BOT_TOKEN не найден! Доступные переменные: " + str(list(os.environ.keys())))
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
