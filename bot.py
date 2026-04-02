@@ -1,10 +1,14 @@
 import asyncio
 import os
 import aiohttp
+import logging
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -17,6 +21,7 @@ dp = Dispatcher()
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
+    log.info(f"Start from {message.from_user.id}")
     await message.answer(
         "Привет! Я бот погоды 🌤️\n\n"
         "Напиши название города (например: Москва):"
@@ -25,43 +30,51 @@ async def start_handler(message: Message):
 
 @dp.message(F.text)
 async def get_weather(message: Message):
+    log.info(f"Got message: {message.text} from {message.from_user.id}")
     city = message.text.strip()
     
-    async with aiohttp.ClientSession() as session:
-        url_geo = f"http://api.openweathermap.org/geo/1.0?q={city},RU&limit=1&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru"
-        async with session.get(url_geo) as resp:
-            geo_data = await resp.json()
+    try:
+        async with aiohttp.ClientSession() as session:
+            url_geo = f"http://api.openweathermap.org/geo/1.0?q={city},RU&limit=1&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru"
+            async with session.get(url_geo, timeout=10) as resp:
+                geo_data = await resp.json()
+                log.info(f"Geo response: {geo_data}")
+            
+            if not geo_data:
+                await message.answer("❌ Город не найден. Попробуй ещё раз:")
+                return
+            
+            lat = geo_data[0]["lat"]
+            lon = geo_data[0]["lon"]
+            city_name = geo_data[0]["name"]
+            
+            url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru&units=metric"
+            async with session.get(url_weather, timeout=10) as resp:
+                weather_data = await resp.json()
+                log.info(f"Weather response: {weather_data}")
         
-        if not geo_data:
-            await message.answer("❌ Город не найден. Попробуй ещё раз:")
-            return
+        main = weather_data["main"]
+        weather = weather_data["weather"][0]
+        wind = weather_data["wind"]
         
-        lat = geo_data[0]["lat"]
-        lon = geo_data[0]["lon"]
-        city_name = geo_data[0]["name"]
+        text = f"🌤 **Погода: {city_name}**\n\n"
+        text += f"📊 {weather['description'].capitalize()}\n"
+        text += f"🌡️ {main['temp']}°C (ощущается {main['feels_like']}°C)\n"
+        text += f"💨 Ветер: {wind.get('speed', 0):.1f} м/с\n"
+        text += f"💧 Влажность: {main['humidity']}%\n"
         
-        url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru&units=metric"
-        async with session.get(url_weather) as resp:
-            weather_data = await resp.json()
-    
-    main = weather_data["main"]
-    weather = weather_data["weather"][0]
-    wind = weather_data["wind"]
-    
-    text = f"🌤 **Погода: {city_name}**\n\n"
-    text += f"📊 {weather['description'].capitalize()}\n"
-    text += f"🌡️ {main['temp']}°C (ощущается {main['feels_like']}°C)\n"
-    text += f"💨 Ветер: {wind.get('speed', 0):.1f} м/с\n"
-    text += f"💧 Влажность: {main['humidity']}%\n"
-    
-    if 'rain' in weather_data:
-        text += f"🌧️ Осадки: {weather_data['rain'].get('1h', 0)} мм\n"
-    elif 'snow' in weather_data:
-        text += f"❄️ Снег: {weather_data['snow'].get('1h', 0)} мм\n"
-    else:
-        text += f"🌈 Осадков нет\n"
-    
-    await message.answer(text, parse_mode="Markdown")
+        if 'rain' in weather_data:
+            text += f"🌧️ Осадки: {weather_data['rain'].get('1h', 0)} мм\n"
+        elif 'snow' in weather_data:
+            text += f"❄️ Снег: {weather_data['snow'].get('1h', 0)} мм\n"
+        else:
+            text += f"🌈 Осадков нет\n"
+        
+        await message.answer(text, parse_mode="Markdown")
+        
+    except Exception as e:
+        log.error(f"Error: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
 
 
 async def health_handler(request):
@@ -69,18 +82,17 @@ async def health_handler(request):
 
 
 async def main():
-    # Запускаем бота
+    log.info("Bot starting...")
     polling_task = asyncio.create_task(dp.start_polling(bot))
     
-    # Запускаем фейковый HTTP-сервер для Render
     app = web.Application()
     app.router.add_get('/health', health_handler)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
+    log.info("Health server started on port 8080")
     
-    # Ждём пока бот работает
     await polling_task
 
 
