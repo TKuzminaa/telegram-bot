@@ -126,12 +126,13 @@ async def get_weather(message: Message):
             text += f"📊 {weather_ru}\n"
             text += f"🌡️ {current.get('temp_C', 0)}°C (ощущается {current.get('FeelsLikeC', 0)}°C)\n"
             
-            # Ветер
-            wind_speed = current.get('windspeedKmph', 0)
+            # Ветер (конвертируем км/ч в м/с)
+            wind_speed_kmph = int(current.get('windspeedKmph', 0))
+            wind_speed_ms = wind_speed_kmph / 3.6  # конвертация в м/с
             wind_dir = current.get('winddir16Point', '')
             wind_dir_ru = WIND_DIRECTIONS.get(wind_dir, wind_dir) if wind_dir else ''
             
-            text += f"💨 Ветер: {wind_speed} км/ч"
+            text += f"💨 Ветер: {wind_speed_ms:.1f} м/с"
             if wind_dir_ru:
                 text += f" ({wind_dir_ru})"
             text += "\n"
