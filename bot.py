@@ -35,10 +35,18 @@ async def get_weather(message: Message):
     
     try:
         async with aiohttp.ClientSession() as session:
+            # Геокодинг
             url_geo = f"http://api.openweathermap.org/geo/1.0?q={city},RU&limit=1&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru"
             async with session.get(url_geo, timeout=10) as resp:
+                log.info(f"Geo status: {resp.status}, Content-Type: {resp.content_type}")
+                text = await resp.text()
+                log.info(f"Geo response text: {text[:200]}")
+                
+                if resp.content_type != 'application/json':
+                    await message.answer("❌ Ошибка API погоды. Попробуй позже.")
+                    return
+                
                 geo_data = await resp.json()
-                log.info(f"Geo response: {geo_data}")
             
             if not geo_data:
                 await message.answer("❌ Город не найден. Попробуй ещё раз:")
@@ -48,29 +56,30 @@ async def get_weather(message: Message):
             lon = geo_data[0]["lon"]
             city_name = geo_data[0]["name"]
             
+            # Погода
             url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru&units=metric"
             async with session.get(url_weather, timeout=10) as resp:
+                log.info(f"Weather status: {resp.status}")
                 weather_data = await resp.json()
-                log.info(f"Weather response: {weather_data}")
-        
-        main = weather_data["main"]
-        weather = weather_data["weather"][0]
-        wind = weather_data["wind"]
-        
-        text = f"🌤 **Погода: {city_name}**\n\n"
-        text += f"📊 {weather['description'].capitalize()}\n"
-        text += f"🌡️ {main['temp']}°C (ощущается {main['feels_like']}°C)\n"
-        text += f"💨 Ветер: {wind.get('speed', 0):.1f} м/с\n"
-        text += f"💧 Влажность: {main['humidity']}%\n"
-        
-        if 'rain' in weather_data:
-            text += f"🌧️ Осадки: {weather_data['rain'].get('1h', 0)} мм\n"
-        elif 'snow' in weather_data:
-            text += f"❄️ Снег: {weather_data['snow'].get('1h', 0)} мм\n"
-        else:
-            text += f"🌈 Осадков нет\n"
-        
-        await message.answer(text, parse_mode="Markdown")
+            
+            main = weather_data.get("main", {})
+            weather = weather_data.get("weather", [{}])[0]
+            wind = weather_data.get("wind", {})
+            
+            text = f"🌤 **Погода: {city_name}**\n\n"
+            text += f"📊 {weather.get('description', 'Нет данных').capitalize()}\n"
+            text += f"🌡️ {main.get('temp', 0):.1f}°C (ощущается {main.get('feels_like', 0):.1f}°C)\n"
+            text += f"💨 Ветер: {wind.get('speed', 0):.1f} м/с\n"
+            text += f"💧 Влажность: {main.get('humidity', 0)}%\n"
+            
+            if 'rain' in weather_data:
+                text += f"🌧️ Осадки: {weather_data['rain'].get('1h', 0)} мм\n"
+            elif 'snow' in weather_data:
+                text += f"❄️ Снег: {weather_data['snow'].get('1h', 0)} мм\n"
+            else:
+                text += f"🌈 Осадков нет\n"
+            
+            await message.answer(text, parse_mode="Markdown")
         
     except Exception as e:
         log.error(f"Error: {e}")
