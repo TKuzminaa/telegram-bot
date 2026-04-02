@@ -11,6 +11,7 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
+WEATHER_API = os.getenv("WEATHER_API", "7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f")
 
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN не найден!")
@@ -35,17 +36,11 @@ async def get_weather(message: Message):
     
     try:
         async with aiohttp.ClientSession() as session:
-            # Геокодинг
-            url_geo = f"http://api.openweathermap.org/geo/1.0?q={city},RU&limit=1&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru"
+            url_geo = f"http://api.openweathermap.org/geo/1.0?q={city},RU&limit=1&appid={WEATHER_API}&lang=ru"
             async with session.get(url_geo, timeout=10) as resp:
-                log.info(f"Geo status: {resp.status}, Content-Type: {resp.content_type}")
-                text = await resp.text()
-                log.info(f"Geo response text: {text[:200]}")
-                
                 if resp.content_type != 'application/json':
                     await message.answer("❌ Ошибка API погоды. Попробуй позже.")
                     return
-                
                 geo_data = await resp.json()
             
             if not geo_data:
@@ -56,10 +51,8 @@ async def get_weather(message: Message):
             lon = geo_data[0]["lon"]
             city_name = geo_data[0]["name"]
             
-            # Погода
-            url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid=7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f&lang=ru&units=metric"
+            url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API}&lang=ru&units=metric"
             async with session.get(url_weather, timeout=10) as resp:
-                log.info(f"Weather status: {resp.status}")
                 weather_data = await resp.json()
             
             main = weather_data.get("main", {})
@@ -91,7 +84,7 @@ async def health_handler(request):
 
 
 async def main():
-    log.info("Bot starting...")
+    log.info(f"Bot starting... Weather API: {WEATHER_API[:10]}...")
     polling_task = asyncio.create_task(dp.start_polling(bot))
     
     app = web.Application()
