@@ -1,7 +1,7 @@
 import asyncio
 import os
 import aiohttp
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
