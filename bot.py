@@ -80,31 +80,20 @@ def translate_weather(desc):
     return desc.capitalize()
 
 
-def get_main_keyboard():
-    """Главное меню с кнопками"""
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📅 Сегодня", callback_data="weather_today")
-    builder.button(text="📅 Завтра", callback_data="weather_tomorrow")
-    builder.button(text="📅 Неделя", callback_data="weather_week")
-    builder.button(text="🔄 Изменить город", callback_data="change_city")
-    builder.adjust(2, 2)
-    return builder.as_markup()
-
-
 def get_period_keyboard(city):
     """Кнопки выбора периода для города"""
     builder = InlineKeyboardBuilder()
     builder.button(text="📅 Сегодня", callback_data=f"period_today|{city}")
     builder.button(text="📅 Завтра", callback_data=f"period_tomorrow|{city}")
     builder.button(text="📅 7 дней", callback_data=f"period_week|{city}")
-    builder.button(text="🔙 Главное меню", callback_data="main_menu")
+    builder.button(text="🔄 Изменить город", callback_data="change_city")
     builder.adjust(2, 2)
     return builder.as_markup()
 
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    user_state[message.from_user.id] = {'city': None}
+    user_state[message.from_user.id] = {'city': None, 'last_period': None}
     await message.answer(
         "Привет! Я бот погоды 🌤️\n\n"
         "Напиши название города (например: Москва):"
@@ -114,7 +103,7 @@ async def start_handler(message: Message):
 @dp.message(F.text)
 async def handle_city(message: Message):
     city = message.text.strip()
-    user_state[message.from_user.id] = {'city': city}
+    user_state[message.from_user.id] = {'city': city, 'last_period': None}
     
     await message.answer(
         f"✅ Город установлен: **{city}**\n\n"
@@ -124,32 +113,30 @@ async def handle_city(message: Message):
     )
 
 
-@dp.callback_query(F.data == "main_menu")
-async def main_menu_handler(callback: CallbackQuery):
-    user_id = callback.from_user.id
-    city = user_state.get(user_id, {}).get('city')
-    
-    if city:
-        await callback.message.edit_text(
-            f"🌤 **Погода: {city}**\n\nВыбери период:",
-            reply_markup=get_period_keyboard(city),
-            parse_mode="Markdown"
-        )
-    else:
-        await callback.message.edit_text(
-            "Напиши название города:"
-        )
+@dp.callback_query(F.data == "change_city")
+async def change_city_handler(callback: CallbackQuery):
+    user_state[callback.from_user.id] = {'city': None, 'last_period': None}
+    await callback.message.edit_text(
+        "Напиши название нового города:"
+    )
 
 
 @dp.callback_query(F.data.startswith("period_"))
 async def period_handler(callback: CallbackQuery):
     await callback.answer()
     
+    user_id = callback.from_user.id
     data = callback.data.split("|")
     period = data[0].replace("period_", "")
-    city = data[1] if len(data) > 1 else user_state.get(callback.from_user.id, {}).get('city', 'Москва')
+    city = data[1] if len(data) > 1 else user_state.get(user_id, {}).get('city', 'Москва')
     
-    user_state[callback.from_user.id] = {'city': city}
+    # Проверяем, не выбран ли уже этот период
+    last_period = user_state.get(user_id, {}).get('last_period')
+    if last_period == period:
+        await callback.answer("Уже выбрано 👍", show_alert=True)
+        return
+    
+    user_state[user_id] = {'city': city, 'last_period': period}
     
     try:
         async with aiohttp.ClientSession() as session:
@@ -185,11 +172,20 @@ async def period_handler(callback: CallbackQuery):
             else:
                 text = await format_day_weather(weather_list[0], city_name, "Сегодня")
             
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_period_keyboard(city),
-                parse_mode="Markdown"
-            )
+            try:
+                await callback.message.edit_text(
+                    text,
+                    reply_markup=get_period_keyboard(city),
+                    parse_mode="Markdown"
+                )
+            except Exception as edit_error:
+                # Если контент не изменился, просто отвечаем в чат
+                log.info(f"Edit failed, sending new message: {edit_error}")
+                await callback.message.answer(
+                    text,
+                    reply_markup=get_period_keyboard(city),
+                    parse_mode="Markdown"
+                )
         
     except Exception as e:
         log.error(f"Error: {e}")
@@ -311,13 +307,6 @@ def get_weather_icon(code):
         return '❄️'
     else:
         return '🌤️'
-
-
-@dp.callback_query(F.data == "change_city")
-async def change_city_handler(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "Напиши название нового города:"
-    )
 
 
 async def main():
