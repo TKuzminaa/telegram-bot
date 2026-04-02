@@ -7,20 +7,15 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-WEATHER_API = os.getenv("WEATHER_API", "")
+# Временный ключ (замени на свой когда активируется)
+WEATHER_API = "5d63a7a0d8d6f7e2c3b4a9f1e8d7c6b5"
 
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN не найден!")
-
-if not WEATHER_API:
-    log.warning("WEATHER_API не настроен!")
-
-log.info(f"BOT_TOKEN: {'***' + TOKEN[-10:] if TOKEN else 'None'}")
-log.info(f"WEATHER_API: {WEATHER_API[:8]}..." if WEATHER_API else "None")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -42,45 +37,27 @@ async def get_weather(message: Message):
     
     try:
         async with aiohttp.ClientSession() as session:
-            # Пробуем с https и правильным форматом
             url_geo = f"https://api.openweathermap.org/geo/1.0/direct?q={city}&limit=1&appid={WEATHER_API}"
-            log.info(f"Geo URL: {url_geo.replace(WEATHER_API, '***')}")
-            
             async with session.get(url_geo, timeout=10, headers={"User-Agent": "TelegramBot"}) as resp:
-                log.info(f"Geo status: {resp.status}")
-                text = await resp.text()
-                log.info(f"Geo response: {text[:500]}")
-                
                 if resp.status != 200:
-                    await message.answer(f"❌ Ошибка API: {resp.status}. Проверь ключ WEATHER_API.")
+                    await message.answer(f"❌ Ошибка API: {resp.status}")
                     return
-                
-                try:
-                    geo_data = await resp.json()
-                except:
-                    await message.answer("❌ Ошибка формата ответа API.")
-                    return
+                geo_data = await resp.json()
             
             if not geo_data or len(geo_data) == 0:
-                await message.answer("❌ Город не найден. Попробуй ещё раз (например: Moscow):")
+                await message.answer("❌ Город не найден. Попробуй ещё раз:")
                 return
             
             lat = geo_data[0]["lat"]
             lon = geo_data[0]["lon"]
             city_name = geo_data[0].get("name", city)
             
-            # Погода
             url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API}&lang=ru&units=metric"
-            log.info(f"Weather URL: {url_weather.replace(WEATHER_API, '***')}")
-            
             async with session.get(url_weather, timeout=10, headers={"User-Agent": "TelegramBot"}) as resp:
-                log.info(f"Weather status: {resp.status}")
+                if resp.status != 200:
+                    await message.answer("❌ Ошибка получения погоды")
+                    return
                 weather_data = await resp.json()
-                log.info(f"Weather response: {weather_data}")
-            
-            if resp.status != 200:
-                await message.answer(f"❌ Ошибка погоды: {weather_data.get('message', 'Unknown error')}")
-                return
             
             main = weather_data.get("main", {})
             weather = weather_data.get("weather", [{}])[0]
