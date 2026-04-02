@@ -200,10 +200,19 @@ async def format_day_weather(forecast, city_name, day_label):
     """Форматирование погоды на один день"""
     hourly = forecast.get('hourly', [])
     
-    # Утро (6), день (12), вечер (18)
-    morning = hourly[6] if len(hourly) > 6 else hourly[0]
-    day = hourly[12] if len(hourly) > 12 else hourly[0]
-    evening = hourly[18] if len(hourly) > 18 else hourly[0]
+    if not hourly or len(hourly) == 0:
+        return f"🌤 **Погода: {city_name}**\n📅 **{day_label}**\n\n❌ Нет данных"
+    
+    # Безопасное получение данных по времени суток
+    def get_hour_data(index):
+        if index < len(hourly):
+            return hourly[index]
+        # Если нет данных для индекса, берём ближайший
+        return hourly[min(index, len(hourly) - 1)]
+    
+    morning = get_hour_data(6)
+    day = get_hour_data(12)
+    evening = get_hour_data(18)
     
     # Осадки по времени суток
     def get_precipitation(hour_data):
@@ -231,8 +240,9 @@ async def format_day_weather(forecast, city_name, day_label):
     text += f"☀️ **День** (12:00): {day.get('tempC', 0)}°C | Осадки: {day_precip}\n"
     text += f"🌆 **Вечер** (18:00): {evening.get('tempC', 0)}°C | Осадки: {evening_precip}\n"
     
-    # УФ-индекс
-    uv = int(forecast.get('hourly', [{}])[12].get('uvIndex', 0))
+    # УФ-индекс (безопасное получение)
+    uv_hour = get_hour_data(12)
+    uv = int(uv_hour.get('uvIndex', 0))
     uv_text = "низкий" if uv <= 2 else "средний" if uv <= 5 else "высокий" if uv <= 7 else "очень высокий"
     text += f"\n☀️ УФ-индекс: {uv} ({uv_text})\n"
     
@@ -249,18 +259,22 @@ async def format_week_weather(weather_list, city_name):
     today = datetime.now().weekday()
     
     for i, day in enumerate(weather_list):
+        if i >= 7:
+            break
+        
         day_name = days_ru[(today + i) % 7]
         max_temp = day.get('maxtempC', 0)
         min_temp = day.get('mintempC', 0)
         
         # Иконка погоды
-        weather_code = day.get('hourly', [{}])[12].get('weatherCode', '116')
+        hourly = day.get('hourly', [])
+        weather_code = hourly[12].get('weatherCode', '116') if len(hourly) > 12 else '116'
         weather_icon = get_weather_icon(weather_code)
         
         # Осадки
-        hourly = day.get('hourly', [{}])
-        chance_rain = int(hourly[12].get('chanceofrain', 0)) if len(hourly) > 12 else 0
-        chance_snow = int(hourly[12].get('chanceofsnow', 0)) if len(hourly) > 12 else 0
+        hour_data = hourly[12] if len(hourly) > 12 else (hourly[0] if hourly else {})
+        chance_rain = int(hour_data.get('chanceofrain', 0))
+        chance_snow = int(hour_data.get('chanceofsnow', 0))
         
         if chance_snow > 50:
             precip = f"❄️ {chance_snow}%"
