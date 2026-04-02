@@ -2,7 +2,7 @@ import asyncio
 import os
 import aiohttp
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
@@ -85,9 +85,8 @@ def get_period_keyboard(city):
     builder = InlineKeyboardBuilder()
     builder.button(text="📅 Сегодня", callback_data=f"period_today|{city}")
     builder.button(text="📅 Завтра", callback_data=f"period_tomorrow|{city}")
-    builder.button(text="📅 7 дней", callback_data=f"period_week|{city}")
     builder.button(text="🔄 Изменить город", callback_data="change_city")
-    builder.adjust(2, 2)
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 
@@ -167,8 +166,6 @@ async def period_handler(callback: CallbackQuery):
                 text = await format_day_weather(weather_list[0], city_name, "Сегодня")
             elif period == "tomorrow" and len(weather_list) > 1:
                 text = await format_day_weather(weather_list[1], city_name, "Завтра")
-            elif period == "week":
-                text = await format_week_weather(weather_list[:7], city_name)
             else:
                 text = await format_day_weather(weather_list[0], city_name, "Сегодня")
             
@@ -203,7 +200,6 @@ async def format_day_weather(forecast, city_name, day_label):
     def get_hour_data(index):
         if index < len(hourly):
             return hourly[index]
-        # Если нет данных для индекса, берём ближайший
         return hourly[min(index, len(hourly) - 1)]
     
     morning = get_hour_data(6)
@@ -236,77 +232,13 @@ async def format_day_weather(forecast, city_name, day_label):
     text += f"☀️ **День** (12:00): {day.get('tempC', 0)}°C | Осадки: {day_precip}\n"
     text += f"🌆 **Вечер** (18:00): {evening.get('tempC', 0)}°C | Осадки: {evening_precip}\n"
     
-    # УФ-индекс (безопасное получение)
+    # УФ-индекс
     uv_hour = get_hour_data(12)
     uv = int(uv_hour.get('uvIndex', 0))
     uv_text = "низкий" if uv <= 2 else "средний" if uv <= 5 else "высокий" if uv <= 7 else "очень высокий"
     text += f"\n☀️ УФ-индекс: {uv} ({uv_text})\n"
     
     return text
-
-
-async def format_week_weather(weather_list, city_name):
-    """Форматирование погоды на неделю"""
-    days_ru = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-    
-    text = f"🌤 **Погода: {city_name}**\n"
-    text += f"📅 **Прогноз на 7 дней**\n\n"
-    
-    today = datetime.now().weekday()
-    
-    for i, day in enumerate(weather_list):
-        if i >= 7:
-            break
-        
-        day_name = days_ru[(today + i) % 7]
-        max_temp = day.get('maxtempC', 0)
-        min_temp = day.get('mintempC', 0)
-        
-        # Иконка погоды
-        hourly = day.get('hourly', [])
-        weather_code = hourly[12].get('weatherCode', '116') if len(hourly) > 12 else '116'
-        weather_icon = get_weather_icon(weather_code)
-        
-        # Осадки
-        hour_data = hourly[12] if len(hourly) > 12 else (hourly[0] if hourly else {})
-        chance_rain = int(hour_data.get('chanceofrain', 0))
-        chance_snow = int(hour_data.get('chanceofsnow', 0))
-        
-        if chance_snow > 50:
-            precip = f"❄️ {chance_snow}%"
-        elif chance_rain > 50:
-            precip = f"🌧️ {chance_rain}%"
-        else:
-            precip = "🌈"
-        
-        text += f"{weather_icon} **{day_name}**: {min_temp}°C...{max_temp}°C | {precip}\n"
-    
-    return text
-
-
-def get_weather_icon(code):
-    """Иконка погоды по коду"""
-    code = str(code)
-    if code in ['113']:
-        return '☀️'
-    elif code in ['116']:
-        return '⛅'
-    elif code in ['119', '122']:
-        return '☁️'
-    elif code in ['143', '248', '260']:
-        return '🌫️'
-    elif code in ['176', '263', '266', '293', '296', '353']:
-        return '🌦️'
-    elif code in ['179', '311', '314', '317', '350', '377']:
-        return '🌨️'
-    elif code in ['182', '185', '281', '284', '308', '311', '356', '359']:
-        return '🌧️'
-    elif code in ['200', '386', '389', '392', '395']:
-        return '⛈️'
-    elif code in ['227', '230', '320', '323', '326', '329', '332', '335', '338', '368', '371']:
-        return '❄️'
-    else:
-        return '🌤️'
 
 
 async def main():
