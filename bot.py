@@ -1,6 +1,7 @@
 import asyncio
 import os
 import aiohttp
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
@@ -63,8 +64,24 @@ async def get_weather(message: Message):
     await message.answer(text, parse_mode="Markdown")
 
 
+async def health_handler(request):
+    return web.json_response({"status": "ok"})
+
+
 async def main():
-    await dp.start_polling(bot)
+    # Запускаем бота
+    polling_task = asyncio.create_task(dp.start_polling(bot))
+    
+    # Запускаем фейковый HTTP-сервер для Render
+    app = web.Application()
+    app.router.add_get('/health', health_handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    
+    # Ждём пока бот работает
+    await polling_task
 
 
 if __name__ == "__main__":
