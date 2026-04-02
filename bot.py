@@ -7,14 +7,17 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-WEATHER_API = os.getenv("WEATHER_API", "7d6e6f8a5c3b2e1f9d8c7a6b5e4d3c2f")
+WEATHER_API = os.getenv("WEATHER_API", "")
 
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN не найден!")
+
+log.info(f"BOT_TOKEN: {'***' + TOKEN[-10:] if TOKEN else 'None'}")
+log.info(f"WEATHER_API: {WEATHER_API[:10] if WEATHER_API else 'None'}...")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -36,11 +39,24 @@ async def get_weather(message: Message):
     
     try:
         async with aiohttp.ClientSession() as session:
+            # Пробуем прямой запрос
             url_geo = f"http://api.openweathermap.org/geo/1.0?q={city},RU&limit=1&appid={WEATHER_API}&lang=ru"
+            log.info(f"Geo URL: {url_geo.replace(WEATHER_API, '***')}")
+            
             async with session.get(url_geo, timeout=10) as resp:
-                if resp.content_type != 'application/json':
-                    await message.answer("❌ Ошибка API погоды. Попробуй позже.")
+                log.info(f"Geo status: {resp.status}")
+                log.info(f"Geo Content-Type: {resp.content_type}")
+                text = await resp.text()
+                log.info(f"Geo response: {text}")
+                
+                if resp.status != 200:
+                    await message.answer(f"❌ Ошибка API: {resp.status}. Проверь ключ WEATHER_API.")
                     return
+                
+                if resp.content_type != 'application/json':
+                    await message.answer("❌ Ошибка формата ответа API.")
+                    return
+                
                 geo_data = await resp.json()
             
             if not geo_data:
@@ -52,8 +68,12 @@ async def get_weather(message: Message):
             city_name = geo_data[0]["name"]
             
             url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API}&lang=ru&units=metric"
+            log.info(f"Weather URL: {url_weather.replace(WEATHER_API, '***')}")
+            
             async with session.get(url_weather, timeout=10) as resp:
+                log.info(f"Weather status: {resp.status}")
                 weather_data = await resp.json()
+                log.info(f"Weather response: {weather_data}")
             
             main = weather_data.get("main", {})
             weather = weather_data.get("weather", [{}])[0]
@@ -84,7 +104,7 @@ async def health_handler(request):
 
 
 async def main():
-    log.info(f"Bot starting... Weather API: {WEATHER_API[:10]}...")
+    log.info("Bot starting...")
     polling_task = asyncio.create_task(dp.start_polling(bot))
     
     app = web.Application()
