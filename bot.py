@@ -11,8 +11,6 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
-# Временный ключ (замени на свой когда активируется)
-WEATHER_API = "5d63a7a0d8d6f7e2c3b4a9f1e8d7c6b5"
 
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN не найден!")
@@ -37,44 +35,66 @@ async def get_weather(message: Message):
     
     try:
         async with aiohttp.ClientSession() as session:
-            url_geo = f"https://api.openweathermap.org/geo/1.0/direct?q={city}&limit=1&appid={WEATHER_API}"
-            async with session.get(url_geo, timeout=10, headers={"User-Agent": "TelegramBot"}) as resp:
+            # Используем wttr.in - бесплатный API без ключа
+            url = f"https://wttr.in/{city}?format=j1&lang=ru"
+            async with session.get(url, timeout=10, headers={"User-Agent": "TelegramBot"}) as resp:
                 if resp.status != 200:
-                    await message.answer(f"❌ Ошибка API: {resp.status}")
+                    await message.answer("❌ Ошибка получения погоды. Попробуй позже.")
                     return
-                geo_data = await resp.json()
+                data = await resp.json()
             
-            if not geo_data or len(geo_data) == 0:
-                await message.answer("❌ Город не найден. Попробуй ещё раз:")
+            if not data or 'current_condition' not in data or not data['current_condition']:
+                await message.answer("❌ Город не найден. Попробуй ещё раз (например: Moscow):")
                 return
             
-            lat = geo_data[0]["lat"]
-            lon = geo_data[0]["lon"]
-            city_name = geo_data[0].get("name", city)
+            current = data['current_condition'][0]
+            city_name = data['nearest_area'][0]['areaName'][0]['value'] if data.get('nearest_area') else city
             
-            url_weather = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={WEATHER_API}&lang=ru&units=metric"
-            async with session.get(url_weather, timeout=10, headers={"User-Agent": "TelegramBot"}) as resp:
-                if resp.status != 200:
-                    await message.answer("❌ Ошибка получения погоды")
-                    return
-                weather_data = await resp.json()
-            
-            main = weather_data.get("main", {})
-            weather = weather_data.get("weather", [{}])[0]
-            wind = weather_data.get("wind", {})
+            # Прогноз на сегодня
+            forecast = data.get('weather', [{}])[0]
             
             text = f"🌤 **Погода: {city_name}**\n\n"
-            text += f"📊 {weather.get('description', 'Нет данных').capitalize()}\n"
-            text += f"🌡️ {main.get('temp', 0):.1f}°C (ощущается {main.get('feels_like', 0):.1f}°C)\n"
-            text += f"💨 Ветер: {wind.get('speed', 0):.1f} м/с\n"
-            text += f"💧 Влажность: {main.get('humidity', 0)}%\n"
+            text += f"📊 {current.get('weatherDesc', [{}])[0].get('value', 'Нет данных')}\n"
+            text += f"🌡️ {current.get('temp_C', 0)}°C (ощущается {current.get('FeelsLikeC', 0)}°C)\n"
+            text += f"💨 Ветер: {current.get('windspeedKmph', 0)} км/ч"
+            if current.get('winddir16Point'):
+                text += f" ({current['winddir16Point']})"
+            text += "\n"
+            text += f"💧 Влажность: {current.get('humidity', 0)}%\n"
             
-            if 'rain' in weather_data:
-                text += f"🌧️ Осадки: {weather_data['rain'].get('1h', 0)} мм\n"
-            elif 'snow' in weather_data:
-                text += f"❄️ Снег: {weather_data['snow'].get('1h', 0)} мм\n"
+            # Осадки
+            chance_of_rain = forecast.get('hourly', [{}])[0].get('chanceofrain', '0')
+            if int(chance_of_rain) > 50:
+                text += f"🌧️ Вероятность осадков: {chance_of_rain}%\n"
             else:
                 text += f"🌈 Осадков нет\n"
+            
+            # УФ-индекс
+            uv_index = current.get('uvIndex', '0')
+            text += f"\n☀️ УФ-индекс: {uv_index}"
+            if int(uv_index) <= 2:
+                text += " (низкий)"
+            elif int(uv_index) <= 5:
+                text += " (средний)"
+            elif int(uv_index) <= 7:
+                text += " (высокий)"
+            else:
+                text += " (очень высокий)"
+            text += "\n"
+            
+            # Температура по времени суток
+            hourly = forecast.get('hourly', [])
+            if hourly:
+                morning = hourly[6] if len(hourly) > 6 else hourly[0]
+                day = hourly[12] if len(hourly) > 12 else hourly[0]
+                evening = hourly[18] if len(hourly) > 18 else hourly[0]
+                
+                text += f"\n📅 **Прогноз на сегодня:**\n"
+                text += f"🌅 Утро: {morning.get('temp_C', 0)}°C\n"
+                text += f"☀️ День: {day.get('temp_C', 0)}°C\n"
+                text += f"🌆 Вечер: {evening.get('temp_C', 0)}°C\n"
+            
+            text += f"\n_Будь здоров!_ 👋"
             
             await message.answer(text, parse_mode="Markdown")
         
