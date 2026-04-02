@@ -2,10 +2,12 @@ import asyncio
 import os
 import aiohttp
 import logging
+from datetime import datetime, timedelta
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -17,6 +19,9 @@ if not TOKEN:
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
+
+# Хранилище состояния пользователя
+user_state = {}
 
 
 # Перевод описаний погоды
@@ -75,9 +80,31 @@ def translate_weather(desc):
     return desc.capitalize()
 
 
+def get_main_keyboard():
+    """Главное меню с кнопками"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Сегодня", callback_data="weather_today")
+    builder.button(text="📅 Завтра", callback_data="weather_tomorrow")
+    builder.button(text="📅 Неделя", callback_data="weather_week")
+    builder.button(text="🔄 Изменить город", callback_data="change_city")
+    builder.adjust(2, 2)
+    return builder.as_markup()
+
+
+def get_period_keyboard(city):
+    """Кнопки выбора периода для города"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Сегодня", callback_data=f"period_today|{city}")
+    builder.button(text="📅 Завтра", callback_data=f"period_tomorrow|{city}")
+    builder.button(text="📅 7 дней", callback_data=f"period_week|{city}")
+    builder.button(text="🔙 Главное меню", callback_data="main_menu")
+    builder.adjust(2, 2)
+    return builder.as_markup()
+
+
 @dp.message(CommandStart())
 async def start_handler(message: Message):
-    log.info(f"Start from {message.from_user.id}")
+    user_state[message.from_user.id] = {'city': None}
     await message.answer(
         "Привет! Я бот погоды 🌤️\n\n"
         "Напиши название города (например: Москва):"
@@ -85,25 +112,57 @@ async def start_handler(message: Message):
 
 
 @dp.message(F.text)
-async def get_weather(message: Message):
-    log.info(f"Got message: {message.text} from {message.from_user.id}")
+async def handle_city(message: Message):
     city = message.text.strip()
+    user_state[message.from_user.id] = {'city': city}
+    
+    await message.answer(
+        f"✅ Город установлен: **{city}**\n\n"
+        "Выбери период:",
+        reply_markup=get_period_keyboard(city),
+        parse_mode="Markdown"
+    )
+
+
+@dp.callback_query(F.data == "main_menu")
+async def main_menu_handler(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    city = user_state.get(user_id, {}).get('city')
+    
+    if city:
+        await callback.message.edit_text(
+            f"🌤 **Погода: {city}**\n\nВыбери период:",
+            reply_markup=get_period_keyboard(city),
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.message.edit_text(
+            "Напиши название города:"
+        )
+
+
+@dp.callback_query(F.data.startswith("period_"))
+async def period_handler(callback: CallbackQuery):
+    await callback.answer()
+    
+    data = callback.data.split("|")
+    period = data[0].replace("period_", "")
+    city = data[1] if len(data) > 1 else user_state.get(callback.from_user.id, {}).get('city', 'Москва')
+    
+    user_state[callback.from_user.id] = {'city': city}
     
     try:
         async with aiohttp.ClientSession() as session:
-            # wttr.in - бесплатный API без ключа
             url = f"https://wttr.in/{city}?format=j1&lang=ru"
             async with session.get(url, timeout=10, headers={"User-Agent": "TelegramBot"}) as resp:
                 if resp.status != 200:
-                    await message.answer("❌ Ошибка получения погоды. Попробуй позже.")
+                    await callback.message.edit_text("❌ Ошибка получения погоды.")
                     return
                 data = await resp.json()
             
-            if not data or 'current_condition' not in data or not data['current_condition']:
-                await message.answer("❌ Город не найден. Попробуй ещё раз (например: Москва):")
+            if not data or 'weather' not in data:
+                await callback.message.edit_text("❌ Город не найден.")
                 return
-            
-            current = data['current_condition'][0]
             
             # Название города
             if data.get('nearest_area') and len(data['nearest_area']) > 0:
@@ -115,99 +174,136 @@ async def get_weather(message: Message):
             else:
                 city_name = city
             
-            # Прогноз на сегодня
-            forecast = data.get('weather', [{}])[0]
+            weather_list = data.get('weather', [])
             
-            # Описание погоды
-            weather_desc = current.get('weatherDesc', [{}])[0].get('value', 'Нет данных')
-            weather_ru = translate_weather(weather_desc)
-            
-            text = f"🌤 **Погода: {city_name}**\n\n"
-            text += f"📊 {weather_ru}\n"
-            text += f"🌡️ {current.get('temp_C', 0)}°C (ощущается {current.get('FeelsLikeC', 0)}°C)\n"
-            
-            # Ветер (конвертируем км/ч в м/с)
-            wind_speed_kmph = int(current.get('windspeedKmph', 0))
-            wind_speed_ms = wind_speed_kmph / 3.6  # конвертация в м/с
-            wind_dir = current.get('winddir16Point', '')
-            wind_dir_ru = WIND_DIRECTIONS.get(wind_dir, wind_dir) if wind_dir else ''
-            
-            text += f"💨 Ветер: {wind_speed_ms:.1f} м/с"
-            if wind_dir_ru:
-                text += f" ({wind_dir_ru})"
-            text += "\n"
-            
-            text += f"💧 Влажность: {current.get('humidity', 0)}%\n"
-            
-            # Видимость
-            visibility = current.get('visibility', 0)
-            if visibility:
-                text += f"👁️ Видимость: {visibility} км\n"
-            
-            # Давление
-            pressure = current.get('pressure', 0)
-            if pressure:
-                text += f"🔽 Давление: {pressure} гПа\n"
-            
-            # Осадки
-            chance_of_rain = forecast.get('hourly', [{}])[0].get('chanceofrain', '0')
-            chance_of_snow = forecast.get('hourly', [{}])[0].get('chanceofsnow', '0')
-            
-            if int(chance_of_rain) > 50:
-                text += f"🌧️ Вероятность дождя: {chance_of_rain}%\n"
-            elif int(chance_of_snow) > 50:
-                text += f"❄️ Вероятность снега: {chance_of_snow}%\n"
+            if period == "today" and len(weather_list) > 0:
+                text = await format_day_weather(weather_list[0], city_name, "Сегодня")
+            elif period == "tomorrow" and len(weather_list) > 1:
+                text = await format_day_weather(weather_list[1], city_name, "Завтра")
+            elif period == "week":
+                text = await format_week_weather(weather_list[:7], city_name)
             else:
-                text += f"🌈 Осадков не ожидается\n"
+                text = await format_day_weather(weather_list[0], city_name, "Сегодня")
             
-            # УФ-индекс
-            uv_index = current.get('uvIndex', 0)
-            text += f"\n☀️ УФ-индекс: {uv_index}"
-            uv = int(uv_index) if uv_index else 0
-            if uv <= 2:
-                text += " (низкий) ☑️"
-            elif uv <= 5:
-                text += " (средний) ⚠️"
-            elif uv <= 7:
-                text += " (высокий) 🛡️"
-            else:
-                text += " (очень высокий) 🚫"
-            text += "\n"
-            
-            # Температура по времени суток
-            hourly = forecast.get('hourly', [])
-            if hourly and len(hourly) >= 3:
-                # Индексы для утра (6), дня (12), вечера (18)
-                morning_idx = min(6, len(hourly) - 1)
-                day_idx = min(12, len(hourly) - 1)
-                evening_idx = min(18, len(hourly) - 1)
-                
-                morning = hourly[morning_idx]
-                day = hourly[day_idx]
-                evening = hourly[evening_idx]
-                
-                text += f"\n📅 **Прогноз на сегодня:**\n"
-                text += f"🌅 Утро (6:00): {morning.get('tempC', 0)}°C\n"
-                text += f"☀️ День (12:00): {day.get('tempC', 0)}°C\n"
-                text += f"🌆 Вечер (18:00): {evening.get('tempC', 0)}°C\n"
-            
-            # Мин/макс температура
-            max_temp = forecast.get('maxtempC', 0)
-            min_temp = forecast.get('mintempC', 0)
-            if max_temp or min_temp:
-                text += f"\n📈 Макс: {max_temp}°C  📉 Мин: {min_temp}°C\n"
-            
-            text += f"\n_Хорошего дня!_ 👋"
-            
-            await message.answer(text, parse_mode="Markdown")
+            await callback.message.edit_text(
+                text,
+                reply_markup=get_period_keyboard(city),
+                parse_mode="Markdown"
+            )
         
     except Exception as e:
         log.error(f"Error: {e}")
-        await message.answer(f"❌ Ошибка: {e}")
+        await callback.message.edit_text(f"❌ Ошибка: {e}")
 
 
-async def health_handler(request):
-    return web.json_response({"status": "ok"})
+async def format_day_weather(forecast, city_name, day_label):
+    """Форматирование погоды на один день"""
+    hourly = forecast.get('hourly', [])
+    
+    # Утро (6), день (12), вечер (18)
+    morning = hourly[6] if len(hourly) > 6 else hourly[0]
+    day = hourly[12] if len(hourly) > 12 else hourly[0]
+    evening = hourly[18] if len(hourly) > 18 else hourly[0]
+    
+    # Осадки по времени суток
+    def get_precipitation(hour_data):
+        chance_rain = int(hour_data.get('chanceofrain', 0))
+        chance_snow = int(hour_data.get('chanceofsnow', 0))
+        if chance_snow > 50:
+            return f"❄️ {chance_snow}%"
+        elif chance_rain > 50:
+            return f"🌧️ {chance_rain}%"
+        else:
+            return "🌈 нет"
+    
+    morning_precip = get_precipitation(morning)
+    day_precip = get_precipitation(day)
+    evening_precip = get_precipitation(evening)
+    
+    text = f"🌤 **Погода: {city_name}**\n"
+    text += f"📅 **{day_label}**\n\n"
+    
+    text += f"📈 Макс: {forecast.get('maxtempC', 0)}°C\n"
+    text += f"📉 Мин: {forecast.get('mintempC', 0)}°C\n\n"
+    
+    text += f"**📅 Прогноз по времени:**\n"
+    text += f"🌅 **Утро** (6:00): {morning.get('tempC', 0)}°C | Осадки: {morning_precip}\n"
+    text += f"☀️ **День** (12:00): {day.get('tempC', 0)}°C | Осадки: {day_precip}\n"
+    text += f"🌆 **Вечер** (18:00): {evening.get('tempC', 0)}°C | Осадки: {evening_precip}\n"
+    
+    # УФ-индекс
+    uv = int(forecast.get('hourly', [{}])[12].get('uvIndex', 0))
+    uv_text = "низкий" if uv <= 2 else "средний" if uv <= 5 else "высокий" if uv <= 7 else "очень высокий"
+    text += f"\n☀️ УФ-индекс: {uv} ({uv_text})\n"
+    
+    return text
+
+
+async def format_week_weather(weather_list, city_name):
+    """Форматирование погоды на неделю"""
+    days_ru = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+    
+    text = f"🌤 **Погода: {city_name}**\n"
+    text += f"📅 **Прогноз на 7 дней**\n\n"
+    
+    today = datetime.now().weekday()
+    
+    for i, day in enumerate(weather_list):
+        day_name = days_ru[(today + i) % 7]
+        max_temp = day.get('maxtempC', 0)
+        min_temp = day.get('mintempC', 0)
+        
+        # Иконка погоды
+        weather_code = day.get('hourly', [{}])[12].get('weatherCode', '116')
+        weather_icon = get_weather_icon(weather_code)
+        
+        # Осадки
+        hourly = day.get('hourly', [{}])
+        chance_rain = int(hourly[12].get('chanceofrain', 0)) if len(hourly) > 12 else 0
+        chance_snow = int(hourly[12].get('chanceofsnow', 0)) if len(hourly) > 12 else 0
+        
+        if chance_snow > 50:
+            precip = f"❄️ {chance_snow}%"
+        elif chance_rain > 50:
+            precip = f"🌧️ {chance_rain}%"
+        else:
+            precip = "🌈"
+        
+        text += f"{weather_icon} **{day_name}**: {min_temp}°C...{max_temp}°C | {precip}\n"
+    
+    return text
+
+
+def get_weather_icon(code):
+    """Иконка погоды по коду"""
+    code = str(code)
+    if code in ['113']:
+        return '☀️'
+    elif code in ['116']:
+        return '⛅'
+    elif code in ['119', '122']:
+        return '☁️'
+    elif code in ['143', '248', '260']:
+        return '🌫️'
+    elif code in ['176', '263', '266', '293', '296', '353']:
+        return '🌦️'
+    elif code in ['179', '311', '314', '317', '350', '377']:
+        return '🌨️'
+    elif code in ['182', '185', '281', '284', '308', '311', '356', '359']:
+        return '🌧️'
+    elif code in ['200', '386', '389', '392', '395']:
+        return '⛈️'
+    elif code in ['227', '230', '320', '323', '326', '329', '332', '335', '338', '368', '371']:
+        return '❄️'
+    else:
+        return '🌤️'
+
+
+@dp.callback_query(F.data == "change_city")
+async def change_city_handler(callback: CallbackQuery):
+    await callback.message.edit_text(
+        "Напиши название нового города:"
+    )
 
 
 async def main():
@@ -223,6 +319,10 @@ async def main():
     log.info("Health server started on port 8080")
     
     await polling_task
+
+
+async def health_handler(request):
+    return web.json_response({"status": "ok"})
 
 
 if __name__ == "__main__":
